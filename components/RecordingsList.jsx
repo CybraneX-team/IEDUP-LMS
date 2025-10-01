@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import VideoPlayer from './VideoPlayer';
 import { 
   FaPlay, 
   FaDownload, 
@@ -13,7 +14,8 @@ import {
   FaTrash,
   FaVideo,
   FaHdd,
-  FaStar
+  FaStar,
+  FaTimes
 } from 'react-icons/fa';
 
 const RecordingsList = () => {
@@ -21,6 +23,7 @@ const RecordingsList = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [playingVideo, setPlayingVideo] = useState(null);
 
   useEffect(() => {
     fetchRecordings();
@@ -110,6 +113,29 @@ const RecordingsList = () => {
 
   const handlePlay = (url) => {
     window.open(url, '_blank');
+  };
+
+  const handlePlayInline = async (recording) => {
+    try {
+      // Use streaming endpoint that supports range requests
+      const streamUrl = `/api/recordings/stream?key=${encodeURIComponent(recording.key)}`;
+      
+      setPlayingVideo({
+        ...recording,
+        url: streamUrl,
+        contentType: recording.contentType || 'video/webm'
+      });
+    } catch (err) {
+      console.error('Error loading video:', err);
+      alert('Failed to load video. Please try again.');
+    }
+  };
+
+  const closeVideoPlayer = () => {
+    if (playingVideo?.url) {
+      window.URL.revokeObjectURL(playingVideo.url);
+    }
+    setPlayingVideo(null);
   };
 
   const handleDownload = async (key, filename) => {
@@ -324,8 +350,19 @@ const RecordingsList = () => {
 
                 <div className="recording-actions">
                   <motion.button
+                    className="action-btn play-btn"
+                    onClick={() => handlePlayInline(recording)}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    title="Play recording"
+                  >
+                    <FaPlay />
+                    Play
+                  </motion.button>
+                  
+                  <motion.button
                     className="action-btn download-btn"
-                    onClick={() => handleDownload(recording.key, `${recording.recordingName || 'recording'}.webm`)}
+                    onClick={() => handleDownload(recording.key, `${recording.recordingName || 'recording'}.${recording.format || 'webm'}`)}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     title="Download recording"
@@ -350,6 +387,43 @@ const RecordingsList = () => {
           </AnimatePresence>
         </motion.div>
       )}
+
+      {/* Video Player Modal */}
+      <AnimatePresence>
+        {playingVideo && (
+          <motion.div 
+            className="video-modal-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={closeVideoPlayer}
+          >
+            <motion.div 
+              className="video-modal-content"
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="video-modal-header">
+                <h3>{playingVideo.recordingName || 'Recording Playback'}</h3>
+                <button className="close-btn" onClick={closeVideoPlayer}>
+                  <FaTimes />
+                </button>
+              </div>
+              
+              <div className="video-player-container">
+                <VideoPlayer 
+                  src={playingVideo.url}
+                  type={playingVideo.contentType}
+                  width="100%"
+                  height={400}
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };

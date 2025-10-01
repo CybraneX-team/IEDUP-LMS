@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { generateRoomId, encodePassphrase, randomString } from '@/lib/client-utils';
+import { fetchMeetings, createMeeting } from '@/lib/api';
 import DashboardBackground from './DashboardBackground';
 import DashboardIllustration from './DashboardIllustration';
 import RecordingsList from './RecordingsList';
@@ -118,57 +119,32 @@ const EnhancedDashboard = () => {
     return () => clearInterval(interval);
   }, []);
   
-  // Load meetings and filter past meetings
-  useEffect(() => {
-    // Load saved meetings from localStorage
-    const savedMeetings = localStorage.getItem('scheduledMeetings');
-    let allMeetings = [];
-    
-    if (savedMeetings) {
-      try {
-        allMeetings = JSON.parse(savedMeetings);
-        
-        // Filter meetings based on current time
-        const now = new Date();
-        const upcoming = allMeetings.filter(meeting => new Date(meeting.date) > now)
-          .sort((a, b) => new Date(a.date) - new Date(b.date)); // Sort by soonest first
-        const past = allMeetings.filter(meeting => new Date(meeting.date) <= now)
-          .sort((a, b) => new Date(b.date) - new Date(a.date)); // Sort by most recent first
-        
-        setScheduledMeetings(upcoming);
-        setPastMeetings(past);
-      } catch (error) {
-        console.error('Error parsing saved meetings:', error);
+  // Load meetings from MongoDB
+  const loadMeetings = async () => {
+    try {
+      const response = await fetchMeetings();
+      if (response.success) {
+        setScheduledMeetings(response.data.upcoming);
+        setPastMeetings(response.data.past);
+      } else {
+        console.error('Failed to fetch meetings:', response.error);
       }
+    } catch (error) {
+      console.error('Error loading meetings:', error);
     }
+  };
+
+  useEffect(() => {
+    loadMeetings();
   }, []);
   
-  // Save meetings to localStorage when they change
-  useEffect(() => {
-    const allMeetings = [...scheduledMeetings, ...pastMeetings];
-    localStorage.setItem('scheduledMeetings', JSON.stringify(allMeetings));
-  }, [scheduledMeetings, pastMeetings]);
 
-  // Periodically check for meetings that have passed
-  useEffect(() => {
-    const checkExpiredMeetings = () => {
-      const now = new Date();
-      const expiredMeetings = scheduledMeetings.filter(meeting => new Date(meeting.date) <= now);
-      
-      if (expiredMeetings.length > 0) {
-        const stillUpcoming = scheduledMeetings.filter(meeting => new Date(meeting.date) > now);
-        const updatedPast = [...pastMeetings, ...expiredMeetings]
-          .sort((a, b) => new Date(b.date) - new Date(a.date));
-        
-        setScheduledMeetings(stillUpcoming);
-        setPastMeetings(updatedPast);
-      }
-    };
 
-    // Check every minute for expired meetings
-    const interval = setInterval(checkExpiredMeetings, 60000);
+  // Periodically refresh meetings from database
+  useEffect(() => {
+    const interval = setInterval(loadMeetings, 5 * 60 * 1000); // Refresh every 5 minutes
     return () => clearInterval(interval);
-  }, [scheduledMeetings, pastMeetings]);
+  }, []);
   
   // Handle sidebar navigation
   const handleNavigation = (section) => {
@@ -225,47 +201,49 @@ const EnhancedDashboard = () => {
   };
   
   // Schedule a meeting
-  const scheduleMeeting = () => {
-    // Validate meeting date is in the future
-    const meetingDate = new Date(meetingDateTime);
-    const now = new Date();
-    
-    if (meetingDate <= now) {
-      setToastMessage("Please select a future date and time for the meeting");
+  const scheduleMeeting = async () => {
+    if (!meetingTitle || !meetingDateTime) {
+      setToastMessage("Please fill in all required fields");
       setShowToast(true);
       setTimeout(() => setShowToast(false), 3000);
       return;
     }
-    
-    // Create a new meeting object
-    const newMeeting = {
-      id: 'meeting-' + Date.now(),
-      title: meetingTitle || 'Untitled Meeting',
-      date: meetingDateTime,
-      participants: 0,
-      description: meetingDescription || 'No description provided',
-      host: 'You',
-      duration: meetingDuration
-    };
-    
-    // Add to scheduled meetings and sort by date
-    const updatedMeetings = [...scheduledMeetings, newMeeting]
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
-    
-    setScheduledMeetings(updatedMeetings);
-    setShowModal(false);
-    
-    // Reset form
-    setMeetingTitle('');
-    setMeetingDescription('');
-    setMeetingDuration('1 hour');
-    
-    // Switch to upcoming view
-    setActiveSection('upcoming');
-    
-    // Show toast notification
-    setToastMessage(`Meeting "${newMeeting.title}" scheduled for ${new Date(meetingDateTime).toLocaleString()}`);
-    setShowToast(true);
+
+    try {
+      const response = await createMeeting({
+        title: meetingTitle,
+        description: meetingDescription,
+        date: meetingDateTime,
+        duration: meetingDuration
+      });
+
+      if (response.success) {
+        // Reload meetings from database
+        await loadMeetings();
+        
+        setShowModal(false);
+        
+        // Reset form
+        setMeetingTitle('');
+        setMeetingDescription('');
+        setMeetingDuration('1 hour');
+        setMeetingDateTime('');
+        
+        // Switch to upcoming view
+        setActiveSection('upcoming');
+        
+        // Show success message
+        setToastMessage(`Meeting "${meetingTitle}" scheduled successfully!`);
+        setShowToast(true);
+      } else {
+        setToastMessage(response.error || 'Failed to schedule meeting');
+        setShowToast(true);
+      }
+    } catch (error) {
+      console.error('Error scheduling meeting:', error);
+      setToastMessage('Error scheduling meeting');
+      setShowToast(true);
+    }
     
     // Hide toast after 4 seconds
     setTimeout(() => {

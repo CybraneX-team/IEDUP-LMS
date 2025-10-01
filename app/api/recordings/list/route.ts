@@ -22,8 +22,8 @@ interface RecordingInfo {
 }
 
 function parseFileName(key: string): Partial<RecordingInfo> | null {
-  // Parse filename: {userId}_{roomName}_{timestamp}_{recordingId}[_{quality}][__recordingName].webm
-  const match = key.match(/^(.+?)_(.+?)_(\d+)_(.+?)(?:_(low|medium|high))?(?:__(.+?))?\.webm$/);
+  // Parse filename: {userId}_{roomName}_{timestamp}_{recordingId}[_{quality}][__recordingName].(webm|mp4)
+  const match = key.match(/^(.+?)_(.+?)_(\d+)_(.+?)(?:_(low|medium|high))?(?:__(.+?))?\.(webm|mp4)$/);
   if (!match) return null;
   
   const [, userId, roomName, timestamp, recordingId, quality, recordingName] = match;
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
     let recordings: RecordingInfo[] = [];
 
     for (const obj of listResponse.Contents) {
-      if (!obj.Key || !obj.Key.endsWith('.webm')) continue;
+      if (!obj.Key || (!obj.Key.endsWith('.webm') && !obj.Key.endsWith('.mp4'))) continue;
 
       const parsedInfo = parseFileName(obj.Key);
       if (!parsedInfo) continue;
@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
         url: `https://${BUCKET}.s3.${REGION}.amazonaws.com/${obj.Key}`,
         key: obj.Key,
           size: headResponse.ContentLength || 0,
-          format: 'webm',
+          format: obj.Key.endsWith('.mp4') ? 'mp4' : 'webm',
           createdAt: headResponse.LastModified?.toISOString() || new Date().toISOString(),
           lastModified: headResponse.LastModified?.toISOString() || new Date().toISOString(),
           // Estimate duration based on file size (rough estimate)
@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
         recordings.push({
           url: `https://${BUCKET}.s3.${REGION}.amazonaws.com/${obj.Key}`,
           key: obj.Key,
-          format: 'webm',
+          format: obj.Key.endsWith('.mp4') ? 'mp4' : 'webm',
           createdAt: new Date().toISOString(),
           lastModified: new Date().toISOString(),
           userId: parsedInfo.userId!,

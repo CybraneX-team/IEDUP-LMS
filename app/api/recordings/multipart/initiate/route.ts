@@ -7,7 +7,7 @@ const BUCKET = process.env.AWS_S3_BUCKET!;
 const REGION = process.env.AWS_REGION!;
 const s3 = new S3Client({ region: REGION });
 
-function getOutputFileName(userId: string, roomName: string, timestamp: string, recordingId: string, recordingName?: string, quality?: string) {
+function getOutputFileName(userId: string, roomName: string, timestamp: string, recordingId: string, recordingName?: string, quality?: string, contentType?: string) {
   let base = `${userId}_${roomName}_${timestamp}_${recordingId}`;
   
   // Add quality to filename if specified
@@ -21,7 +21,9 @@ function getOutputFileName(userId: string, roomName: string, timestamp: string, 
     base += `__${safeName}`;
   }
   
-  return `${base}.webm`;
+  // Use appropriate file extension based on content type
+  const extension = contentType === 'video/mp4' ? '.mp4' : '.webm';
+  return `${base}${extension}`;
 }
 
 function validateRecordingRequest(data: any): { isValid: boolean; errors: string[] } {
@@ -55,6 +57,10 @@ function validateRecordingRequest(data: any): { isValid: boolean; errors: string
     errors.push('quality must be one of: low, medium, high');
   }
   
+  if (data.contentType && !['video/mp4', 'video/webm'].includes(data.contentType)) {
+    errors.push('contentType must be either video/mp4 or video/webm');
+  }
+
   return {
     isValid: errors.length === 0,
     errors
@@ -81,10 +87,11 @@ export async function POST(req: NextRequest) {
       recordingId, 
       recordingName, 
       estimatedParts = 20,
-      quality = 'medium'
+      quality = 'medium',
+      contentType = 'video/webm' // Default to webm for backward compatibility
     } = data;
 
-    const outputFileName = getOutputFileName(userId, roomName, timestamp, recordingId, recordingName, quality);
+    const outputFileName = getOutputFileName(userId, roomName, timestamp, recordingId, recordingName, quality, contentType);
     
     console.log('Multipart: Initiating upload for:', {
       outputFileName,
@@ -99,7 +106,7 @@ export async function POST(req: NextRequest) {
     const createMultipartCommand = new CreateMultipartUploadCommand({
       Bucket: BUCKET,
       Key: outputFileName,
-      ContentType: 'video/webm',
+      ContentType: contentType,
       Metadata: {
         userId,
         roomName,
@@ -107,6 +114,7 @@ export async function POST(req: NextRequest) {
         recordingId,
         recordingName: recordingName || '',
         quality,
+        contentType,
         uploadType: 'multipart'
       }
     });

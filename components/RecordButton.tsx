@@ -13,6 +13,8 @@ interface RecordingState {
   totalParts: number;
   uploadedParts: number;
   totalSize: number;
+  progress: number; // Progress percentage (0-100)
+  progressMessage: string; // Current operation message
 }
 
 // Upload configuration
@@ -35,6 +37,85 @@ function generateRecordingName(): string {
   );
 }
 
+// Client-side WebM to MP4 conversion using canvas and MediaRecorder
+async function convertWebMToMP4(webmBlob: Blob): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log('[CONVERSION] Starting WebM to MP4 conversion...');
+      
+      const video = document.createElement('video');
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d')!;
+      
+      video.muted = true;
+      video.playsInline = true;
+      
+      // Check if MP4 recording is supported
+      let mp4MimeType = 'video/mp4';
+      if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264,aac')) {
+        mp4MimeType = 'video/mp4;codecs=h264,aac';
+      }
+      
+      const mp4Chunks: BlobPart[] = [];
+      let mp4Recorder: MediaRecorder;
+      
+      video.onloadedmetadata = async () => {
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        
+        // Create a new stream combining canvas video with original audio
+        const canvasStream = canvas.captureStream(30);
+        
+        // Extract audio tracks from the original video
+        let audioTracks: MediaStreamTrack[] = [];
+        
+        try {
+          // Try to get audio from the original video element
+          if ('captureStream' in video && typeof (video as any).captureStream === 'function') {
+            const videoStream = (video as any).captureStream();
+            audioTracks = videoStream.getAudioTracks();
+          }
+        } catch (e) {
+          console.warn('[CONVERSION] Could not extract audio tracks:', e);
+        }
+        
+        // Combine canvas video with audio tracks
+        const combinedStream = new MediaStream([
+          ...canvasStream.getVideoTracks(),
+          ...audioTracks
+        ]);
+        
+        mp4Recorder = new MediaRecorder(combinedStream, { mimeType: mp4MimeType });
+        
+        mp4Recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) mp4Chunks.push(event.data);
+        };
+        
+        mp4Recorder.onstop = () => {
+          const mp4Blob = new Blob(mp4Chunks, { type: 'video/mp4' });
+          resolve(mp4Blob);
+        };
+        
+        mp4Recorder.start();
+        video.play();
+      };
+      
+      video.ontimeupdate = () => {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      };
+      
+      video.onended = () => {
+        if (mp4Recorder?.state !== 'inactive') mp4Recorder.stop();
+      };
+      
+      video.src = URL.createObjectURL(webmBlob);
+      
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 export function useRecordButton() {
   // Enhanced state management
   const [recordingState, setRecordingState] = useState<RecordingState>({
@@ -47,7 +128,9 @@ export function useRecordButton() {
     recordingName: '',
     totalParts: 0,
     uploadedParts: 0,
-    totalSize: 0
+    totalSize: 0,
+    progress: 0,
+    progressMessage: ''
   });
 
   // Refs for recording session
@@ -58,8 +141,10 @@ export function useRecordButton() {
   const uploadedPartsRef = useRef<Array<{ PartNumber: number; ETag: string }>>([]);
   const keyRef = useRef<string | null>(null);
   const currentRecordingIdRef = useRef<string | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
   const pendingUploadsRef = useRef<number>(0);
   const isRecordingStoppedRef = useRef<boolean>(false);
+  const contentTypeRef = useRef<string>('video/mp4');
 
   // LiveKit context
   const room = useRoomContext();
@@ -103,7 +188,8 @@ export function useRecordButton() {
     roomName: string, 
     timestamp: string, 
     recordingName: string,
-    quality: string = 'medium'
+    quality: string = 'medium',
+    contentType: string = 'video/webm'
   ): Promise<boolean> => {
     try {
       setRecordingState(prev => ({ ...prev, isProcessing: true, error: null }));
@@ -118,7 +204,8 @@ export function useRecordButton() {
           recordingId,
           recordingName,
           estimatedParts: 60,
-          quality
+          quality,
+          contentType
         })
       });
 
@@ -173,7 +260,7 @@ export function useRecordButton() {
   }, [showAlert]);
 
   // Helper to upload chunk with retry logic
-  const uploadChunkToS3 = useCallback(async (chunk: Blob, partNumber: number): Promise<boolean> => {
+  const uploadChunkToS3 = useCallback(async (chunk: Blob, partNumber: number, contentType: string = 'video/mp4'): Promise<boolean> => {
     const maxRetries = uploadConfigRef.current?.maxRetries || 3;
     const retryDelay = uploadConfigRef.current?.retryDelay || 1000;
 
@@ -190,7 +277,7 @@ export function useRecordButton() {
           method: 'PUT',
           body: chunk,
           headers: {
-            'Content-Type': 'video/webm'
+            'Content-Type': contentType
           }
         });
 
@@ -293,7 +380,7 @@ export function useRecordButton() {
         error: null
       }));
 
-      showAlert('Recording saved successfully!', 'success');
+      // showAlert('Recording saved successfully!', 'success');
       return true;
     } catch (error: any) {
       console.error('[DEBUG] Error completing multipart upload:', error);
@@ -306,6 +393,207 @@ export function useRecordButton() {
       return false;
     }
   }, [recordingState.recordingName, recordingState.totalSize, showAlert]);
+
+  // Process and upload recording after getting name
+  const processAndUploadRecording = useCallback(async (chunks: Blob[], recordingName: string) => {
+    try {
+      console.log(`[DEBUG] Processing recording: ${recordingName}`);
+      setRecordingState(prev => ({ 
+        ...prev, 
+        isProcessing: true, 
+        progress: 5, 
+        progressMessage: 'Initializing upload...' 
+      }));
+
+
+
+      // Combine all chunks into one blob
+      console.log(`[DEBUG] Combining ${chunks.length} chunks...`);
+      const combinedBlob = new Blob(chunks, { type: contentTypeRef.current });
+      
+      let finalBlob = combinedBlob;
+      let finalContentType = contentTypeRef.current;
+      let finalExtension = contentTypeRef.current === 'video/mp4' ? '.mp4' : '.webm';
+      
+      // Convert WebM to MP4 if needed
+      if (contentTypeRef.current === 'video/webm') {
+        console.log('[DEBUG] Converting complete recording to MP4...');
+        setRecordingState(prev => ({ 
+          ...prev, 
+          progress: 10, 
+          progressMessage: 'Converting to MP4...' 
+        }));
+        
+        try {
+          finalBlob = await convertWebMToMP4(combinedBlob);
+          finalContentType = 'video/mp4';
+          finalExtension = '.mp4';
+          console.log('[DEBUG] Successfully converted to MP4');
+          setRecordingState(prev => ({ 
+            ...prev, 
+            progress: 20, 
+            progressMessage: 'Conversion completed' 
+          }));
+        } catch (error) {
+          console.error('[DEBUG] Conversion failed, will upload as WebM:', error);
+          setRecordingState(prev => ({ 
+            ...prev, 
+            progress: 20, 
+            progressMessage: 'Conversion failed, uploading as WebM' 
+          }));
+          // Keep original WebM if conversion fails
+        }
+      } else {
+        setRecordingState(prev => ({ 
+          ...prev, 
+          progress: 20, 
+          progressMessage: 'Preparing for upload...' 
+        }));
+      }
+      
+      // Initialize multipart upload with the final content type (after conversion)
+      console.log(`[DEBUG] Initializing upload for ${finalContentType} file...`);
+      setRecordingState(prev => ({ 
+        ...prev, 
+        progress: 25, 
+        progressMessage: 'Initializing upload...' 
+      }));
+      
+      const recordingId = currentRecordingIdRef.current || crypto.randomUUID();
+      const timestamp = Date.now().toString();
+      
+      const uploadInitialized = await initializeMultipartUpload(
+        recordingId,
+        userId || 'unknownUser',
+        roomName || 'unknownRoom',
+        timestamp,
+        recordingName,
+        'medium', // Default quality
+        finalContentType // Use final content type after conversion
+      );
+      
+      if (!uploadInitialized) {
+        console.error('[DEBUG] Failed to initialize upload');
+        setRecordingState(prev => ({ 
+          ...prev, 
+          error: 'Failed to initialize upload',
+          isRecording: false,
+          isProcessing: false
+        }));
+        showAlert('Failed to initialize upload', 'error');
+        return;
+      }
+      
+      // Upload file in chunks with progress tracking
+      console.log(`[DEBUG] Starting chunked upload of ${finalContentType} file...`);
+      setRecordingState(prev => ({ 
+        ...prev, 
+        isUploading: true, 
+        progress: 30, 
+        progressMessage: 'Starting upload...' 
+      }));
+      
+      const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+      const totalChunks = Math.ceil(finalBlob.size / CHUNK_SIZE);
+      let uploadedBytes = 0;
+      
+      console.log(`[DEBUG] File size: ${(finalBlob.size / (1024 * 1024)).toFixed(2)} MB, splitting into ${totalChunks} chunks`);
+      
+      // Upload chunks with progress tracking
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const start = chunkIndex * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, finalBlob.size);
+        const chunk = finalBlob.slice(start, end);
+        const partNumber = chunkIndex + 1;
+        
+        console.log(`[DEBUG] Uploading chunk ${partNumber}/${totalChunks} (${(chunk.size / (1024 * 1024)).toFixed(2)} MB)`);
+        
+        setRecordingState(prev => ({
+          ...prev,
+          progress: Math.round((chunkIndex / totalChunks) * 100),
+          progressMessage: `Uploading chunk ${partNumber} of ${totalChunks}...`
+        }));
+        
+        pendingUploadsRef.current++;
+        const uploadSuccess = await uploadChunkToS3(chunk, partNumber, finalContentType);
+        pendingUploadsRef.current--;
+        
+        if (!uploadSuccess) {
+          console.error(`[DEBUG] Failed to upload chunk ${partNumber}`);
+          setRecordingState(prev => ({ 
+            ...prev, 
+            error: `Upload failed at chunk ${partNumber}`,
+            isRecording: false,
+            isProcessing: false,
+            isUploading: false,
+            progress: 0,
+            progressMessage: ''
+          }));
+          showAlert(`Upload failed at chunk ${partNumber}`, 'error');
+          await abortMultipartUpload();
+          return;
+        }
+        
+        uploadedBytes += chunk.size;
+        const progress = Math.round((uploadedBytes / finalBlob.size) * 100);
+        setRecordingState(prev => ({
+          ...prev,
+          progress: progress,
+          progressMessage: `Uploaded ${(uploadedBytes / (1024 * 1024)).toFixed(1)} MB of ${(finalBlob.size / (1024 * 1024)).toFixed(1)} MB`
+        }));
+      }
+      
+      console.log(`[DEBUG] All ${totalChunks} chunks uploaded successfully`);
+      setRecordingState(prev => ({
+        ...prev,
+        progress: 100,
+        progressMessage: 'Finalizing upload...'
+      }));
+      
+      // Complete the upload
+      const completionSuccess = await completeMultipartUpload();
+      if (!completionSuccess) {
+        console.error('[DEBUG] Failed to complete multipart upload');
+        setRecordingState(prev => ({ 
+          ...prev, 
+          error: 'Failed to finalize upload',
+          isProcessing: false,
+          isUploading: false,
+          progress: 0,
+          progressMessage: ''
+        }));
+        await abortMultipartUpload();
+      } else {
+        console.log('[DEBUG] Recording uploaded successfully');
+        setRecordingState(prev => ({ 
+          ...prev, 
+          isProcessing: false,
+          isUploading: false,
+          progress: 0,
+          progressMessage: 'Upload completed successfully!'
+        }));
+        showAlert('Recording uploaded successfully!', 'success');
+        
+        // Clear progress message after a delay
+        setTimeout(() => {
+          setRecordingState(prev => ({ ...prev, progressMessage: '' }));
+        }, 3000);
+      }
+      
+    } catch (error) {
+      console.error('[DEBUG] Error processing recording:', error);
+      setRecordingState(prev => ({ 
+        ...prev, 
+        error: 'Processing failed',
+        isRecording: false,
+        isProcessing: false
+      }));
+      showAlert('Recording processing failed', 'error');
+    } finally {
+      // Clean up
+      recordingChunksRef.current = [];
+    }
+  }, [userId, roomName, initializeMultipartUpload, uploadChunkToS3, completeMultipartUpload, showAlert]);
 
   // Helper to abort multipart upload
   const abortMultipartUpload = useCallback(async (): Promise<void> => {
@@ -352,7 +640,6 @@ export function useRecordButton() {
       setRecordingState(prev => ({ 
         ...prev, 
         error: null, 
-        isProcessing: true,
         uploadedParts: 0,
         totalSize: 0
       }));
@@ -360,16 +647,17 @@ export function useRecordButton() {
       // Reset upload tracking
       pendingUploadsRef.current = 0;
       isRecordingStoppedRef.current = false;
+      recordingChunksRef.current = []; // Clear any previous chunks
 
-      // Get screen capture and microphone audio
+      // Get screen capture (video only - no system audio)
       screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: { 
           displaySurface: 'monitor',
-          width: { ideal: 854, max: 854 },
-          height: { ideal: 480, max: 480 },
-          frameRate: { ideal: 24, max: 30 }
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 60 }
         },
-        audio: false // Don't capture system audio
+        audio: false // Disable system audio - only use microphone
       });
 
       // Get microphone audio stream
@@ -390,99 +678,78 @@ export function useRecordButton() {
       
       streamRef.current = stream;
 
-      // Create MediaRecorder with optimized settings
+      let mimeType = 'video/mp4;codecs=h264,aac';
+      let contentType = 'video/mp4';
+
+      // Fallback to WebM if MP4 is not supported
+      if (!window.MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp9';
+        contentType = 'video/webm';
+        console.warn('[DEBUG] MP4 recording not supported, falling back to WebM');
+      }
+      
+      // Store content type in ref for use in event handlers
+      contentTypeRef.current = contentType;
+      
+      console.log(`[DEBUG] Recording will use format: ${contentType} with mimeType: ${mimeType}`);
+      
+      // Enhanced recording options for better quality
       const mediaRecorder = new window.MediaRecorder(stream, { 
-        mimeType: 'video/webm;codecs=vp9',
-        videoBitsPerSecond: 500000,
-        audioBitsPerSecond: 64000
+        mimeType,
+        videoBitsPerSecond: 2500000,  // 2.5 Mbps for 720p quality
+        audioBitsPerSecond: 128000    // 128 kbps for better audio
       });
       
       mediaRecorderRef.current = mediaRecorder;
 
-      // Generate recording metadata
+      // Generate recording metadata (don't initialize upload yet)
       const recordingId = crypto.randomUUID();
-      const timestamp = Date.now().toString();
       const recordingName = generateRecordingName();
 
       // Store recording ID in ref for consistent access
       currentRecordingIdRef.current = recordingId;
 
-      // Initialize multipart upload
-      const uploadInitialized = await initializeMultipartUpload(
-        recordingId,
-        userId || 'unknownUser',
-        roomName || 'unknownRoom',
-        timestamp,
-        recordingName,
-        'medium' // Default quality
-      );
-      
-      if (!uploadInitialized) {
-        if (stream) stream.getTracks().forEach(track => track.stop());
-        if (screenStream) screenStream.getTracks().forEach(track => track.stop());
-        if (micStream) micStream.getTracks().forEach(track => track.stop());
-        return;
-      }
-
       // Set up data handlers
       mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && currentRecordingIdRef.current) {
-          const partNumber = uploadedPartsRef.current.length + 1;
-          
-          console.log('[DEBUG] Uploading WebM chunk:', {
-            partNumber,
-            size: (event.data.size / (1024 * 1024)).toFixed(2) + ' MB'
-          });
-          
-          // Track pending upload
-          pendingUploadsRef.current++;
-          
-          const uploadSuccess = await uploadChunkToS3(event.data, partNumber);
-          
-          // Decrement pending upload
-          pendingUploadsRef.current--;
-          
-          if (!uploadSuccess) {
-            console.error('[DEBUG] Failed to upload WebM chunk, stopping recording');
-            setRecordingState(prev => ({ 
-              ...prev, 
-              error: 'Upload failed. Recording stopped.',
-              isRecording: false 
-            }));
-            showAlert('Upload failed. Recording stopped.', 'error');
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-              mediaRecorderRef.current.stop();
-            }
-            return;
-          }
-          
-          // Check if recording stopped and all uploads are complete
-          if (isRecordingStoppedRef.current && pendingUploadsRef.current === 0) {
-            console.log('[DEBUG] All uploads complete, finishing multipart upload');
-            await completeMultipartUpload();
-          }
+        if (event.data.size > 0) {
+          // Simply collect chunks during recording
+          recordingChunksRef.current.push(event.data);
+          console.log(`[DEBUG] Collected chunk: ${(event.data.size / (1024 * 1024)).toFixed(2)} MB`);
         }
       };
 
       mediaRecorder.onstop = async () => {
         console.log('[DEBUG] MediaRecorder stopped');
         
-        // Mark recording as stopped
-        isRecordingStoppedRef.current = true;
-        
-        // Wait for all pending uploads to complete
-        if (pendingUploadsRef.current > 0) {
-          console.log('[DEBUG] Waiting for', pendingUploadsRef.current, 'pending uploads to complete');
-          // The completion will be handled in ondataavailable when pendingUploadsRef.current reaches 0
-        } else {
-          // No pending uploads, complete immediately
-          if (uploadedPartsRef.current.length > 0) {
-            const completionSuccess = await completeMultipartUpload();
-            if (!completionSuccess) {
-              console.error('[DEBUG] Failed to complete multipart upload');
-              await abortMultipartUpload();
-            }
+        try {
+          if (recordingChunksRef.current.length === 0) {
+            console.log('[DEBUG] No chunks recorded');
+            setRecordingState(prev => ({ ...prev, isRecording: false, error: 'No data recorded' }));
+            return;
           }
+          
+          // Prompt for recording name
+          let name = window.prompt('Name your recording:', recordingState.recordingName || generateRecordingName());
+          if (!name || !name.trim()) {
+            name = generateRecordingName();
+          }
+          
+          // Update state with the new name
+          setRecordingState(prev => ({ ...prev, recordingName: name.trim() }));
+          
+          // Process and upload with the user-provided name
+          await processAndUploadRecording([...recordingChunksRef.current], name.trim());
+          
+        } catch (error) {
+          console.error('[DEBUG] Error in onstop handler:', error);
+          setRecordingState(prev => ({ 
+            ...prev, 
+            error: 'Processing failed',
+            isRecording: false 
+          }));
+          showAlert('Recording processing failed', 'error');
+          // Clean up on error
+          recordingChunksRef.current = [];
         }
         
         // Clean up streams
@@ -493,10 +760,10 @@ export function useRecordButton() {
         
         // Also clean up individual streams if they exist
         if (screenStream) {
-          screenStream.getTracks().forEach(track => track.stop());
+          screenStream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
         }
         if (micStream) {
-          micStream.getTracks().forEach(track => track.stop());
+          micStream.getTracks().forEach((track: MediaStreamTrack) => track.stop());
         }
       };
 
@@ -529,14 +796,6 @@ export function useRecordButton() {
   const stopRecording = useCallback(async () => {
     console.log('[DEBUG] stopRecording called');
     
-    // Prompt for recording name
-    let name = window.prompt('Name your recording:', recordingState.recordingName || '');
-    if (!name || !name.trim()) {
-      name = generateRecordingName();
-    }
-
-    setRecordingState(prev => ({ ...prev, recordingName: name.trim() }));
-
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
       setRecordingState(prev => ({ ...prev, isRecording: false }));
@@ -544,7 +803,7 @@ export function useRecordButton() {
       // Broadcast recording stop
       await broadcastRecordingStatus('stop');
     }
-  }, [recordingState.recordingName, broadcastRecordingStatus]);
+  }, [broadcastRecordingStatus]);
 
   // Toggle recording
   const toggleRecording = useCallback(async () => {
@@ -597,15 +856,139 @@ export function RecordButton() {
   const { buttonProps, recordingState } = useRecordButton();
 
   return (
-    <button {...buttonProps}>
-      <span style={{ 
-        fontSize: '1.2em', 
-        color: recordingState.isRecording ? '#ff1744' : 'inherit',
-        filter: recordingState.isProcessing || recordingState.isUploading ? 'grayscale(50%)' : 'none'
-      }}>
-        {recordingState.isRecording ? '⏹️' : '⏺️'}
-      </span>
-      {recordingState.isRecording ? 'Stop Recording' : 'Start Recording'}
-    </button>
+    <>
+      <button {...buttonProps}>
+        <span style={{ 
+          fontSize: '1.2em', 
+          color: recordingState.isRecording ? '#ff1744' : 'inherit',
+          filter: recordingState.isProcessing || recordingState.isUploading ? 'grayscale(50%)' : 'none'
+        }}>
+          {recordingState.isRecording ? '⏹️' : '⏺️'}
+        </span>
+        {recordingState.isRecording ? 'Stop Recording' : 'Start Recording'}
+      </button>
+
+      {/* Full Screen Progress Overlay */}
+      {(recordingState.isProcessing || recordingState.isUploading) && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          color: 'white'
+        }}>
+          <div style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            borderRadius: '12px',
+            padding: '40px',
+            minWidth: '400px',
+            maxWidth: '500px',
+            textAlign: 'center',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+            color: '#333'
+          }}>
+            {/* Processing/Upload Icon */}
+            <div style={{
+              fontSize: '3em',
+              marginBottom: '20px',
+              animation: 'spin 2s linear infinite'
+            }}>
+              {recordingState.isUploading ? '📤' : '⚙️'}
+            </div>
+
+            {/* Title */}
+            <h3 style={{
+              margin: '0 0 20px 0',
+              fontSize: '1.4em',
+              fontWeight: '600',
+              color: '#333'
+            }}>
+              {recordingState.isUploading ? 'Uploading Recording' : 'Processing Recording'}
+            </h3>
+
+            {/* Progress Bar */}
+            <div style={{
+              width: '100%',
+              height: '8px',
+              backgroundColor: '#e0e0e0',
+              borderRadius: '4px',
+              overflow: 'hidden',
+              marginBottom: '15px'
+            }}>
+              <div style={{
+                width: `${recordingState.progress}%`,
+                height: '100%',
+                backgroundColor: recordingState.isUploading ? '#4caf50' : '#2196f3',
+                transition: 'width 0.3s ease',
+                borderRadius: '4px'
+              }} />
+            </div>
+
+            {/* Progress Text */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '10px',
+              fontSize: '0.95em'
+            }}>
+              <span style={{ color: '#666' }}>{recordingState.progressMessage}</span>
+              <span style={{ 
+                color: '#333', 
+                fontWeight: '600',
+                fontSize: '1.1em'
+              }}>
+                {recordingState.progress}%
+              </span>
+            </div>
+
+            {/* Additional Info */}
+            <div style={{
+              fontSize: '0.85em',
+              color: '#888',
+              marginTop: '15px'
+            }}>
+              {recordingState.isUploading 
+                ? 'Please keep this page open until upload completes'
+                : 'Converting your recording to MP4 format'
+              }
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Toast */}
+      {recordingState.progressMessage && !recordingState.isProcessing && !recordingState.isUploading && (
+        <div style={{
+          position: 'fixed',
+          top: '20px',
+          right: '20px',
+          backgroundColor: '#4caf50',
+          color: 'white',
+          padding: '15px 20px',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+          zIndex: 9999,
+          fontSize: '0.9em',
+          fontWeight: '500'
+        }}>
+          ✅ {recordingState.progressMessage}
+        </div>
+      )}
+
+      {/* CSS Animation */}
+      <style jsx>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </>
   );
 } 

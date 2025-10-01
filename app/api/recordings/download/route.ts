@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Download .webm from S3 into memory
+    // Download file from S3 into memory
     const s3Obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
     if (!s3Obj.Body) throw new Error('No body in S3 response');
     const s3Stream = s3Obj.Body as NodeJS.ReadableStream;
@@ -25,16 +25,19 @@ export async function GET(req: NextRequest) {
         chunks.push(Buffer.from(chunk));
       }
     }
-    const webmBuffer = Buffer.concat(chunks);
-    console.log('Download: WebM buffer size:', webmBuffer.length);
+    const fileBuffer = Buffer.concat(chunks);
+    console.log('Download: File buffer size:', fileBuffer.length);
 
-    // Return WebM file directly - modern browsers support WebM playback
-    return new Response(webmBuffer, {
+    // Determine content type based on file extension
+    const contentType = key.endsWith('.mp4') ? 'video/mp4' : 'video/webm';
+    
+    // Return file with correct content type based on extension
+    return new Response(fileBuffer, {
       status: 200,
       headers: {
-        'Content-Type': 'video/webm',
+        'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${key}"`,
-        'Content-Length': webmBuffer.length.toString(),
+        'Content-Length': fileBuffer.length.toString(),
       },
     });
   } catch (err: any) {

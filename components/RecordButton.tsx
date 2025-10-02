@@ -662,12 +662,16 @@ export function useRecordButton() {
 
       // Get microphone audio stream
       micStream = await navigator.mediaDevices.getUserMedia({
+        video :{
+          
+        },
         audio: {
           sampleRate: 44100,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true
         }
+
       });
 
       // Combine screen video with microphone audio

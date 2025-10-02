@@ -313,6 +313,28 @@ const EnhancedDashboard = () => {
         animate={{ x: 0, opacity: 1 }}
         transition={{ duration: 0.5 }}
       >
+        {/* Logo */}
+        <motion.div 
+          className="sidebar-logo"
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+        >
+          <img 
+            src="/logo/lms.png" 
+            alt="Logo" 
+            className="logo-image"
+          />
+          {/* <motion.p 
+            className="logo-text"
+            // initial={{ y: 10, opacity: 0 }}
+            // animate={{ y: 0, opacity: 1 }}
+            // transition={{ duration: 0.5, delay: 0.4 }}
+          >
+            Uttar Pradesh's First Export Specific Incubation Center
+          </motion.p> */}
+        </motion.div>
+        
         <motion.div 
           className={`sidebar-item ${activeSection === 'home' ? 'active' : ''}`}
           onClick={() => handleNavigation('home')}
@@ -384,6 +406,22 @@ const EnhancedDashboard = () => {
           transition={{ delay: 0.2, duration: 0.5 }}
         >
           <div className="time-display">
+            <motion.h2
+              className="institute-title"
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.25, duration: 0.5 }}
+              style={{ 
+                fontWeight: 'bold', 
+                color: 'white', 
+                fontSize: '3rem',
+                marginBottom: '0.5rem',
+                textAlign: 'center',
+                paddingTop: '0px'
+              }}
+            >
+              Institute of Entrepreneurship and Development, UP
+            </motion.h2>
             <motion.h1
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}

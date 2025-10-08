@@ -37,9 +37,9 @@ export default function ParticipantLoginPage() {
         localStorage.setItem('participantData', JSON.stringify(data.participant));
         localStorage.setItem('participantToken', data.token);
         
-        // Redirect to dashboard or meeting room after a short delay
+        // Redirect to participant landing page after a short delay
         setTimeout(() => {
-          router.push('/dashboard');
+          router.push('/participant');
         }, 1500);
       } else {
         setError(data.error || 'Login failed');
@@ -352,7 +352,7 @@ export default function ParticipantLoginPage() {
           }}
         >
           <button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push('/participant')}
             style={{
               background: 'none',
               border: 'none',

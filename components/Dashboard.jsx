@@ -35,9 +35,9 @@ const Dashboard = () => {
         day: 'numeric' 
       }));
       
-      // Default meeting time (now + 1 hour)
+      // Default meeting time (now + 1 hour) in LOCAL for input
       const futureTime = new Date(now.getTime() + 60 * 60 * 1000);
-      setMeetingDateTime(futureTime.toISOString().slice(0, 16));
+      setMeetingDateTime(toLocalInputString(futureTime));
     };
     
     updateTime();
@@ -140,10 +140,10 @@ const Dashboard = () => {
     setShowModal(true);
     setMeetingDescription('');
     
-    // Set default date time (current time + 1 hour)
+    // Set default date time (current time + 1 hour) in LOCAL for input
     const now = new Date();
     const futureTime = new Date(now.getTime() + 60 * 60 * 1000);
-    setMeetingDateTime(futureTime.toISOString().slice(0, 16));
+    setMeetingDateTime(toLocalInputString(futureTime));
   };
   
   // Start an instant meeting
@@ -200,6 +200,17 @@ const Dashboard = () => {
     const options = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
     return new Date(dateString).toLocaleDateString('en-US', options);
   };
+
+  // Convert a Date to yyyy-MM-ddTHH:mm in LOCAL time for datetime-local inputs
+  function toLocalInputString(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const year = date.getFullYear();
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
   
   return (
     <div className="dashboard-container">

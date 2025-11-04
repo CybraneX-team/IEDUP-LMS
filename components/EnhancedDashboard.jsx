@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { generateRoomId, encodePassphrase, randomString } from '@/lib/client-utils';
-import { fetchMeetings, createMeeting } from '@/lib/api';
+import { fetchMeetings, createMeeting, updateMeeting } from '@/lib/api';
 import DashboardBackground from './DashboardBackground';
 import DashboardIllustration from './DashboardIllustration';
 import RecordingsList from './RecordingsList';
@@ -24,7 +24,8 @@ import {
   FaUser,
   FaUsers,
   FaClock,
-  FaCalendar
+  FaCalendar,
+  FaEdit
 } from 'react-icons/fa';
 
 // Animation variants
@@ -89,6 +90,10 @@ const EnhancedDashboard = () => {
     timestamp: null
   });
 
+  // Inline edit state for meeting title
+  const [editingMeetingId, setEditingMeetingId] = useState(null);
+  const [editingTitle, setEditingTitle] = useState('');
+
 
   
   // Set current time
@@ -150,6 +155,44 @@ const EnhancedDashboard = () => {
   const handleNavigation = (section) => {
     setActiveSection(section);
   };
+
+  // Begin editing a meeting title
+  const beginEditTitle = (meeting) => {
+    setEditingMeetingId(meeting.id);
+    setEditingTitle(meeting.title || '');
+  };
+
+  // Cancel editing
+  const cancelEditTitle = () => {
+    setEditingMeetingId(null);
+    setEditingTitle('');
+  };
+
+  // Save edited title to DB
+  const saveEditedTitle = async () => {
+    if (!editingMeetingId) return;
+    const trimmed = (editingTitle || '').trim();
+    if (!trimmed) return;
+    try {
+      const res = await updateMeeting({ id: editingMeetingId, title: trimmed });
+      if (res.success) {
+        await loadMeetings();
+        setToastMessage('Meeting title updated');
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 2500);
+        cancelEditTitle();
+      } else {
+        setToastMessage(res.error || 'Failed to update meeting');
+        setShowToast(true);
+        setTimeout(() => setShowToast(false), 3000);
+      }
+    } catch (e) {
+      console.error('Update meeting error', e);
+      setToastMessage('Error updating meeting');
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    }
+  };
   
   // Handle start new meeting
   const handleNewMeeting = () => {
@@ -172,10 +215,10 @@ const EnhancedDashboard = () => {
     setMeetingDescription('');
     setMeetingDuration('1 hour');
     
-    // Set default date time (current time + 1 hour)
+    // Set default date time (current time + 1 hour) in LOCAL for input
     const now = new Date();
     const futureTime = new Date(now.getTime() + 60 * 60 * 1000);
-    setMeetingDateTime(futureTime.toISOString().slice(0, 16));
+    setMeetingDateTime(toLocalInputString(futureTime));
   };
   
   // Start an instant meeting
@@ -213,7 +256,8 @@ const EnhancedDashboard = () => {
       const response = await createMeeting({
         title: meetingTitle,
         description: meetingDescription,
-        date: meetingDateTime,
+        // Convert local datetime-local value to ISO (UTC) for storage
+        date: new Date(meetingDateTime).toISOString(),
         duration: meetingDuration
       });
 
@@ -262,6 +306,17 @@ const EnhancedDashboard = () => {
     const options = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
     return new Date(dateString).toLocaleDateString('en-US', options);
   };
+
+  // Convert a Date to yyyy-MM-ddTHH:mm in LOCAL time for datetime-local inputs
+  function toLocalInputString(date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const year = date.getFullYear();
+    const month = pad(date.getMonth() + 1);
+    const day = pad(date.getDate());
+    const hours = pad(date.getHours());
+    const minutes = pad(date.getMinutes());
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
   
   // Calculate meeting duration (time between now and meeting date)
   const calculateDuration = (meetingDate) => {
@@ -563,7 +618,21 @@ const EnhancedDashboard = () => {
                     >
                       <div className="meeting-details" style={{ flex: 1, minWidth: 0 }}>
                         <div className="meeting-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem', gap: '1rem' }}>
-                          <h4 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{meeting.title}</h4>
+                          {editingMeetingId === meeting.id ? (
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                              <input 
+                                type="text" 
+                                value={editingTitle}
+                                onChange={(e) => setEditingTitle(e.target.value)}
+                                className="modal-input"
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', width: '100%' }}
+                              />
+                              <button onClick={saveEditedTitle} className="join-button" style={{ padding: '0.35rem 0.6rem' }}>Save</button>
+                              <button onClick={cancelEditTitle} className="secondary-button" style={{ padding: '0.35rem 0.6rem' }}>Cancel</button>
+                            </div>
+                          ) : (
+                            <h4 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{meeting.title}</h4>
+                          )}
                           <span className="meeting-time" style={{ fontSize: '0.875rem', color: '#60a5fa', fontWeight: 500, whiteSpace: 'nowrap', flexShrink: 0 }}>
                             {formatDate(meeting.date)}
                           </span>
@@ -576,7 +645,19 @@ const EnhancedDashboard = () => {
                           </span>
                         </div>
                       </div>
-                      <div className="meeting-actions" style={{ marginLeft: '1rem', flexShrink: 0 }}>
+                      <div className="meeting-actions" style={{ marginLeft: '1rem', flexShrink: 0, display: 'flex', gap: '0.5rem' }}>
+                        {editingMeetingId !== meeting.id && (
+                          <motion.button 
+                            className="secondary-button"
+                            onClick={() => beginEditTitle(meeting)}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                          >
+                            <FaEdit size={14} />
+                            Edit
+                          </motion.button>
+                        )}
                         <motion.button 
                           className="join-button"
                           onClick={() => router.push(`/rooms/${meeting.id}`)}
@@ -722,7 +803,21 @@ const EnhancedDashboard = () => {
                       >
                         <div className="meeting-details" style={{ flex: 1, minWidth: 0 }}>
                           <div className="meeting-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem', gap: '1rem' }}>
-                            <h4 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{meeting.title}</h4>
+                            {editingMeetingId === meeting.id ? (
+                              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flex: 1, minWidth: 0 }}>
+                                <input 
+                                  type="text" 
+                                  value={editingTitle}
+                                  onChange={(e) => setEditingTitle(e.target.value)}
+                                  className="modal-input"
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.875rem', width: '100%' }}
+                                />
+                                <button onClick={saveEditedTitle} className="join-button" style={{ padding: '0.35rem 0.6rem' }}>Save</button>
+                                <button onClick={cancelEditTitle} className="secondary-button" style={{ padding: '0.35rem 0.6rem' }}>Cancel</button>
+                              </div>
+                            ) : (
+                              <h4 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 600, color: '#f8fafc', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{meeting.title}</h4>
+                            )}
                             <span className="meeting-time" style={{ fontSize: '0.875rem', color: '#60a5fa', fontWeight: 500, whiteSpace: 'nowrap', flexShrink: 0 }}>
                               {formatDate(meeting.date)}
                             </span>
@@ -735,7 +830,19 @@ const EnhancedDashboard = () => {
                             </span>
                           </div>
                         </div>
-                        <div className="meeting-actions" style={{ marginLeft: '1rem', flexShrink: 0 }}>
+                        <div className="meeting-actions" style={{ marginLeft: '1rem', flexShrink: 0, display: 'flex', gap: '0.5rem' }}>
+                          {editingMeetingId !== meeting.id && (
+                            <motion.button 
+                              className="secondary-button"
+                              onClick={() => beginEditTitle(meeting)}
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                              style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                            >
+                              <FaEdit size={14} />
+                              Edit
+                            </motion.button>
+                          )}
                           <motion.button 
                             className="join-button"
                             onClick={() => router.push(`/rooms/${meeting.id}`)}

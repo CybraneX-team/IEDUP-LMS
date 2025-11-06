@@ -50,7 +50,7 @@ const RecordingsList = () => {
       setLoading(false);
     }
   };
-
+  console.log("recordings",recordings )
   const formatDate = (timestamp) => {
     const date = new Date(parseInt(timestamp));
     return date.toLocaleDateString('en-US', {
@@ -138,29 +138,28 @@ const RecordingsList = () => {
     setPlayingVideo(null);
   };
 
-  const handleDownload = async (key, filename) => {
-    try {
-      const response = await fetch(`/api/recordings/download?key=${encodeURIComponent(key)}`);
-      
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = filename || 'recording.webm';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-      } else {
-        const errorData = await response.json();
-        alert(`Download failed: ${errorData.error || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error('Error downloading recording:', err);
-      alert('Failed to download recording. Please try again.');
-    }
-  };
+const handleDownload = async (key, filename) => {
+  try {
+    // Create a direct download link instead of buffering in JS
+    const downloadUrl = `/api/recordings/download?key=${encodeURIComponent(key)}`;
+
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename || "recording.webm"; // Browser uses this
+    document.body.appendChild(link);
+
+    // Simulate user click
+    link.click();
+
+    // Cleanup
+    document.body.removeChild(link);
+
+  } catch (err) {
+    console.error("Error downloading recording:", err);
+    alert("Failed to download recording. Please try again.");
+  }
+};
+
 
   const handleDelete = async (key, recordingName) => {
     const confirmDelete = window.confirm(

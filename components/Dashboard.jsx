@@ -17,7 +17,6 @@ const Dashboard = () => {
   const [scheduledMeetings, setScheduledMeetings] = useState([]);
   const [pastMeetings, setPastMeetings] = useState([]);
   const [recordings, setRecordings] = useState([]);
-  
   // Set current time
   useEffect(() => {
     const updateTime = () => {

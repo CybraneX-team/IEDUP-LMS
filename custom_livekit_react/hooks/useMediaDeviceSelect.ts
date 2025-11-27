@@ -49,6 +49,21 @@ export function useMediaDeviceSelect({
 
   const roomFallback = React.useMemo(() => room ?? roomContext ?? new Room(), [room, roomContext]);
 
+  const canEnumerate =
+    typeof navigator !== 'undefined' && !!navigator.mediaDevices?.enumerateDevices;
+
+  if (!canEnumerate) {
+    console.warn(
+      'Media device enumeration not supported in this browser or context. Falling back to defaults.',
+    );
+    return {
+      devices: [] as MediaDeviceInfo[],
+      className: '',
+      activeDeviceId: 'default',
+      setActiveMediaDevice: async () => {},
+    };
+  }
+
   // List of all devices.
   const deviceObserver = React.useMemo(
     () => createMediaDeviceObserver(kind, onError, requestPermissions),

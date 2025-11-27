@@ -169,6 +169,25 @@ function VideoConferenceComponent(props: {
   }, [props.userChoices, props.options.hq, props.options.codec]);
 
   const room = React.useMemo(() => new Room(roomOptions), []);
+  const micRetryAttemptedRef = React.useRef(false);
+
+  const enableMicrophoneWithFallback = React.useCallback(async () => {
+    try {
+      await room.localParticipant.setMicrophoneEnabled(true);
+    } catch (error: any) {
+      const isMissingDevice =
+        error?.name === 'NotFoundError' || /requested device not found/i.test(error?.message ?? '');
+
+      if (isMissingDevice && !micRetryAttemptedRef.current) {
+        micRetryAttemptedRef.current = true;
+        console.warn('Microphone device from saved preferences missing, retrying with default.');
+        await room.localParticipant.setMicrophoneEnabled(true, { deviceId: undefined });
+        return;
+      }
+
+      throw error;
+    }
+  }, [room]);
 
   React.useEffect(() => {
     if (e2eeEnabled) {
@@ -221,16 +240,44 @@ function VideoConferenceComponent(props: {
     });
   }
 
+  const router = useRouter();
+  const handleOnLeave = React.useCallback(() => router.push('/'), [router]);
+  const handleError = React.useCallback((error: Error) => {
+    console.error(error);
+    alert(`Encountered an unexpected error, check the console logs for details: ${error.message}`);
+  }, []);
+  const handleEncryptionError = React.useCallback((error: Error) => {
+    console.error(error);
+    alert(
+      `Encountered an unexpected encryption error, check the console logs for details: ${error.message}`,
+    );
+  }, []);
+  const handleMediaDevicesError = React.useCallback(
+    (error: Error, kind?: MediaDeviceKind) => {
+      const isAudioError = kind === 'audioinput';
+      const isMissingDevice =
+        error?.name === 'NotFoundError' || /requested device not found/i.test(error?.message ?? '');
+
+      if (isAudioError && isMissingDevice && !micRetryAttemptedRef.current) {
+        enableMicrophoneWithFallback().catch(handleError);
+        return;
+      }
+
+      handleError(error);
+    },
+    [enableMicrophoneWithFallback, handleError],
+  );
+
 
   React.useEffect(() => {
-    room.on(RoomEvent.Disconnected, handleOnLeave);
-    room.on(RoomEvent.EncryptionError, handleEncryptionError);
-    room.on(RoomEvent.MediaDevicesError, handleError);
-    room.on(RoomEvent.Connected, markAttendance);
-    room.on(RoomEvent.Disconnected, markAttendance)
-    if (e2eeSetupComplete) {
-      room
-        .connect(
+      room.on(RoomEvent.Disconnected, handleOnLeave);
+      room.on(RoomEvent.EncryptionError, handleEncryptionError);
+      room.on(RoomEvent.MediaDevicesError, handleMediaDevicesError);
+      room.on(RoomEvent.Connected, markAttendance);
+      room.on(RoomEvent.Disconnected, markAttendance)
+      if (e2eeSetupComplete) {
+        room
+          .connect(
           props.connectionDetails.serverUrl,
           props.connectionDetails.participantToken,
           connectOptions,
@@ -244,7 +291,7 @@ function VideoConferenceComponent(props: {
         });
       }
       if (props.userChoices.audioEnabled) {
-        room.localParticipant.setMicrophoneEnabled(true).catch((error: Error) => {
+        enableMicrophoneWithFallback().catch((error: Error) => {
           handleError(error);
         });
       }
@@ -253,24 +300,20 @@ function VideoConferenceComponent(props: {
     return () => {
       room.off(RoomEvent.Disconnected, handleOnLeave);
       room.off(RoomEvent.EncryptionError, handleEncryptionError);
-      room.off(RoomEvent.MediaDevicesError, handleError);
+      room.off(RoomEvent.MediaDevicesError, handleMediaDevicesError);
       room.off(RoomEvent.Connected, markAttendance);
       room.off(RoomEvent.Disconnected, markAttendance)
     };
-  }, [e2eeSetupComplete, room, props.connectionDetails, props.userChoices]);
-
-  const router = useRouter();
-  const handleOnLeave = React.useCallback(() => router.push('/'), [router]);
-  const handleError = React.useCallback((error: Error) => {
-    console.error(error);
-    alert(`Encountered an unexpected error, check the console logs for details: ${error.message}`);
-  }, []);
-  const handleEncryptionError = React.useCallback((error: Error) => {
-    console.error(error);
-    alert(
-      `Encountered an unexpected encryption error, check the console logs for details: ${error.message}`,
-    );
-  }, []);
+  }, [
+    e2eeSetupComplete,
+    room,
+    props.connectionDetails,
+    props.userChoices,
+    enableMicrophoneWithFallback,
+    handleOnLeave,
+    handleEncryptionError,
+    handleMediaDevicesError,
+  ]);
 
   const [notify, setNotify] = useState<boolean>(false);
   const [notifyText, setNotifyText] = useState<string>('');

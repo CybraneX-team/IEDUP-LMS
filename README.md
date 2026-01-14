@@ -38,5 +38,7 @@ Steps to get a local dev setup up and running:
 1. Run `pnpm install` to install all dependencies.
 2. Copy `.env.example` in the project root and rename it to `.env.local`.
 3. Update the missing environment variables in the newly created `.env.local` file.
+   - For LiveKit recordings, set `NEXT_PUBLIC_LK_RECORD_ENDPOINT=/api/recordings/livekit`.
+   - Recording output is configured via `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, and `AWS_S3_BUCKET`.
 4. Run `pnpm dev` to start the development server and visit [http://localhost:3000](http://localhost:3000) to see the result.
 5. Start development 🎉

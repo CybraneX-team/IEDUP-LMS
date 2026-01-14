@@ -1,40 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { useRoomContext, useLocalParticipant } from '../custom_livekit_react';
+import React from 'react';
+import { useIsRecording } from '../custom_livekit_react';
 
 interface RecordingIndicatorProps {
   className?: string;
 }
 
 export function RecordingIndicator({ className = '' }: RecordingIndicatorProps) {
-  const room = useRoomContext();
-  const { localParticipant } = useLocalParticipant();
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingHost, setRecordingHost] = useState<string>('');
-
-  useEffect(() => {
-    const handleData = (payload: Uint8Array, participant?: any) => {
-      try {
-        const data = JSON.parse(new TextDecoder().decode(payload));
-        
-        if (data.type === 'recording-status') {
-          if (data.action === 'start') {
-            setIsRecording(true);
-            setRecordingHost(data.hostName || data.hostIdentity);
-          } else if (data.action === 'stop') {
-            setIsRecording(false);
-            setRecordingHost('');
-          }
-        }
-      } catch (error) {
-        console.error('Error handling recording status message:', error);
-      }
-    };
-
-    room.on('dataReceived', handleData);
-    return () => {
-      room.off('dataReceived', handleData);
-    };
-  }, [room]);
+  const isRecording = useIsRecording();
 
   if (!isRecording) {
     return null;
@@ -76,11 +48,6 @@ export function RecordingIndicator({ className = '' }: RecordingIndicatorProps) 
       >
         <span style={{ fontSize: '12px' }}>⏺️</span>
         RECORDING
-        {recordingHost && (
-          <span style={{ fontSize: '10px', opacity: 0.8, marginLeft: '4px' }}>
-            by {recordingHost}
-          </span>
-        )}
       </div>
       <style dangerouslySetInnerHTML={{
         __html: `

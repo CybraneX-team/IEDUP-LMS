@@ -3,18 +3,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import VideoPlayer from './VideoPlayer';
-import { 
-  FaPlay, 
-  FaDownload, 
-  FaClock, 
-  FaUsers, 
+import {
+  FaPlay,
+  FaDownload,
+  FaClock,
   FaCalendarAlt,
   FaSpinner,
   FaExclamationTriangle,
-  FaTrash,
   FaVideo,
   FaHdd,
-  FaStar,
   FaTimes
 } from 'react-icons/fa';
 
@@ -33,10 +30,10 @@ const RecordingsList = () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await fetch('/api/recordings/list');
       const data = await response.json();
-      
+
       if (response.ok) {
         setRecordings(data.recordings || []);
         setSummary(data.summary || null);
@@ -50,8 +47,9 @@ const RecordingsList = () => {
       setLoading(false);
     }
   };
-  const formatDate = (timestamp) => {
-    const date = new Date(parseInt(timestamp));
+  const formatDate = (timestampMs) => {
+    if (!timestampMs) return 'Unknown';
+    const date = new Date(timestampMs);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
@@ -74,7 +72,7 @@ const RecordingsList = () => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) {
       return `${hours}h ${minutes}m ${secs}s`;
     } else if (minutes > 0) {
@@ -84,45 +82,15 @@ const RecordingsList = () => {
     }
   };
 
-  const getQualityIcon = (quality) => {
-    switch (quality?.toLowerCase()) {
-      case 'high':
-        return <FaStar style={{ color: '#fbbf24' }} />;
-      case 'medium':
-        return <FaStar style={{ color: '#6b7280' }} />;
-      case 'low':
-        return <FaStar style={{ color: '#9ca3af' }} />;
-      default:
-        return <FaStar style={{ color: '#6b7280' }} />;
-    }
-  };
-
-  const getQualityLabel = (quality) => {
-    switch (quality?.toLowerCase()) {
-      case 'high':
-        return 'High Quality';
-      case 'medium':
-        return 'Medium Quality';
-      case 'low':
-        return 'Low Quality';
-      default:
-        return 'Standard Quality';
-    }
-  };
-
-  const handlePlay = (url) => {
-    window.open(url, '_blank');
-  };
-
   const handlePlayInline = async (recording) => {
     try {
-      // Use streaming endpoint that supports range requests
-      const streamUrl = `/api/recordings/stream?key=${encodeURIComponent(recording.key)}`;
-      
+      if (!recording.key) {
+        throw new Error('Recording key is unavailable');
+      }
       setPlayingVideo({
         ...recording,
-        url: streamUrl,
-        contentType: recording.contentType || 'video/webm'
+        url: `/api/recordings/stream?key=${encodeURIComponent(recording.key)}`,
+        contentType: recording.contentType || `video/${recording.format || 'mp4'}`
       });
     } catch (err) {
       console.error('Error loading video:', err);
@@ -137,71 +105,41 @@ const RecordingsList = () => {
     setPlayingVideo(null);
   };
 
-const handleDownload = async (key, filename) => {
-  try {
-    // Create a direct download link instead of buffering in JS
-    const downloadUrl = `/api/recordings/download?key=${encodeURIComponent(key)}`;
-
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = filename || "recording.webm"; // Browser uses this
-    document.body.appendChild(link);
-
-    // Simulate user click
-    link.click();
-
-    // Cleanup
-    document.body.removeChild(link);
-
-  } catch (err) {
-    console.error("Error downloading recording:", err);
-    alert("Failed to download recording. Please try again.");
-  }
-};
-
-
-  const handleDelete = async (key, recordingName) => {
-    const confirmDelete = window.confirm(
-      `Are you sure you want to delete "${recordingName}"? This action cannot be undone.`
-    );
-    
-    if (!confirmDelete) return;
-
+  const handleDownload = async (key, filename) => {
     try {
-      const response = await fetch(`/api/recordings/delete?key=${encodeURIComponent(key)}`, {
-        method: 'DELETE',
-      });
-
-      if (response.ok) {
-        // Remove the recording from the local state
-        setRecordings(prevRecordings => 
-          prevRecordings.filter(recording => recording.key !== key)
-        );
-        
-        // Refresh summary data
-        fetchRecordings();
-      } else {
-        const errorData = await response.json();
-        alert(`Failed to delete recording: ${errorData.error || 'Unknown error'}`);
+      if (!key) {
+        throw new Error('Recording key is unavailable');
       }
+      const link = document.createElement("a");
+      link.href = `/api/recordings/download?key=${encodeURIComponent(key)}`;
+      link.download = filename || "recording.mp4"; // Browser uses this
+      document.body.appendChild(link);
+
+      // Simulate user click
+      link.click();
+
+      // Cleanup
+      document.body.removeChild(link);
+
     } catch (err) {
-      console.error('Error deleting recording:', err);
-      alert('Failed to delete recording. Please try again.');
+      console.error("Error downloading recording:", err);
+      alert("Failed to download recording. Please try again.");
     }
   };
 
+
   const itemVariants = {
     initial: { y: 20, opacity: 0 },
-    animate: { 
-      y: 0, 
+    animate: {
+      y: 0,
       opacity: 1,
-      transition: { 
+      transition: {
         type: "spring",
         stiffness: 100
       }
     },
-    exit: { 
-      y: -20, 
+    exit: {
+      y: -20,
       opacity: 0,
       transition: { duration: 0.2 }
     },
@@ -213,7 +151,7 @@ const handleDownload = async (key, filename) => {
 
   if (loading) {
     return (
-      <motion.div 
+      <motion.div
         className="recordings-loading"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -226,7 +164,7 @@ const handleDownload = async (key, filename) => {
 
   if (error) {
     return (
-      <motion.div 
+      <motion.div
         className="recordings-error"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -241,13 +179,13 @@ const handleDownload = async (key, filename) => {
   }
 
   return (
-    <motion.div 
+    <motion.div
       className="recordings-section"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
     >
-      <motion.h2 
+      <motion.h2
         className="section-title"
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -258,7 +196,7 @@ const handleDownload = async (key, filename) => {
 
       {/* Summary Stats */}
       {summary && (
-        <motion.div 
+        <motion.div
           className="recordings-summary"
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -270,17 +208,17 @@ const handleDownload = async (key, filename) => {
           </div>
           <div className="summary-stat">
             <FaHdd />
-            <span>{formatFileSize(summary.totalSize || 0)}</span>
+            <span>{formatFileSize(summary.totalSizeBytes || 0)}</span>
           </div>
           <div className="summary-stat">
             <FaClock />
-            <span>{formatDuration(summary.totalDuration || 0)}</span>
+            <span>{formatDuration(summary.totalDurationSeconds || 0)}</span>
           </div>
         </motion.div>
       )}
 
       {recordings.length === 0 ? (
-        <motion.div 
+        <motion.div
           className="empty-recordings"
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
@@ -291,7 +229,7 @@ const handleDownload = async (key, filename) => {
           <p>Your meeting recordings will appear here after you record a meeting.</p>
         </motion.div>
       ) : (
-        <motion.div 
+        <motion.div
           className="recordings-list"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -299,8 +237,8 @@ const handleDownload = async (key, filename) => {
         >
           <AnimatePresence>
             {recordings.map((recording, index) => (
-              <motion.div 
-                key={recording.recordingId}
+              <motion.div
+                key={recording.id}
                 className="recording-item"
                 variants={itemVariants}
                 initial="initial"
@@ -311,38 +249,30 @@ const handleDownload = async (key, filename) => {
               >
                 <div className="recording-info">
                   <div className="recording-header">
-                    <h3>{recording.recordingName || 'Untitled Recording'}</h3>
+                    <h3>{recording.name.startsWith("recordings/") ? recording.name.split("/")[1] : recording.name || 'Untitled Recording'}</h3>
                     <span className="recording-date">
                       <FaCalendarAlt />
-                      {formatDate(recording.timestamp)}
+                      {formatDate(recording.startedAtMs)}
                     </span>
                   </div>
-                  
+
                   <div className="recording-details">
-                    <span className="recording-user">
-                      <FaUsers />
-                      {recording.userId}
-                    </span>
                     <span className="recording-room">
                       <FaVideo />
                       {recording.roomName}
                     </span>
-                    <span className="recording-quality">
-                      {getQualityIcon(recording.quality)}
-                      {getQualityLabel(recording.quality)}
-                    </span>
-                    {recording.size && (
+                    {recording.sizeBytes ? (
                       <span className="recording-size">
                         <FaHdd />
-                        {formatFileSize(recording.size)}
+                        {formatFileSize(recording.sizeBytes)}
                       </span>
-                    )}
-                    {recording.duration && (
+                    ) : null}
+                    {recording.durationSeconds ? (
                       <span className="recording-duration">
                         <FaClock />
-                        {formatDuration(recording.duration)}
+                        {formatDuration(recording.durationSeconds)}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
@@ -357,27 +287,16 @@ const handleDownload = async (key, filename) => {
                     <FaPlay />
                     Play
                   </motion.button>
-                  
+
                   <motion.button
                     className="action-btn download-btn"
-                    onClick={() => handleDownload(recording.key, `${recording.recordingName || 'recording'}.${recording.format || 'webm'}`)}
+                    onClick={() => handleDownload(recording.key, recording.filename || `${recording.name || 'recording'}.${recording.format || 'mp4'}`)}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     title="Download recording"
                   >
                     <FaDownload />
                     Download
-                  </motion.button>
-                  
-                  <motion.button
-                    className="action-btn delete-btn"
-                    onClick={() => handleDelete(recording.key, recording.recordingName || 'recording')}
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    title="Delete recording"
-                  >
-                    <FaTrash />
-                    Delete
                   </motion.button>
                 </div>
               </motion.div>
@@ -389,14 +308,14 @@ const handleDownload = async (key, filename) => {
       {/* Video Player Modal */}
       <AnimatePresence>
         {playingVideo && (
-          <motion.div 
+          <motion.div
             className="video-modal-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeVideoPlayer}
           >
-            <motion.div 
+            <motion.div
               className="video-modal-content"
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -404,14 +323,14 @@ const handleDownload = async (key, filename) => {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="video-modal-header">
-                <h3>{playingVideo.recordingName || 'Recording Playback'}</h3>
+                <h3>{playingVideo.name || 'Recording Playback'}</h3>
                 <button className="close-btn" onClick={closeVideoPlayer}>
                   <FaTimes />
                 </button>
               </div>
-              
+
               <div className="video-player-container">
-                <VideoPlayer 
+                <VideoPlayer
                   src={playingVideo.url}
                   type={playingVideo.contentType}
                   width="100%"

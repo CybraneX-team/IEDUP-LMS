@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { EgressClient, EncodedFileType } from 'livekit-server-sdk';
+import { EgressClient, EncodedFileOutput, EncodedFileType, S3Upload } from 'livekit-server-sdk';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 
 const API_KEY = process.env.LIVEKIT_API_KEY;
@@ -64,24 +64,6 @@ export async function GET(request: NextRequest) {
     return errorResponse('Recording already in progress', 409);
   }
 
-  const output: {
-    fileType: EncodedFileType;
-    filepath: string;
-    output?: {
-      case: 's3';
-      value: {
-        accessKey: string;
-        secret: string;
-        sessionToken?: string;
-        region: string;
-        bucket: string;
-      };
-    };
-  } = {
-    fileType: EncodedFileType.MP4,
-    filepath: 'recordings/{room_name}-{time}.mp4',
-  };
-
   const s3Configured =
     AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY && AWS_REGION && AWS_S3_BUCKET;
   if (!s3Configured) {
@@ -90,17 +72,21 @@ export async function GET(request: NextRequest) {
       500,
     );
   }
-
-  output.output = {
-    case: 's3',
-    value: {
-      accessKey: AWS_ACCESS_KEY_ID,
-      secret: AWS_SECRET_ACCESS_KEY,
-      sessionToken: AWS_SESSION_TOKEN || undefined,
-      region: AWS_REGION,
-      bucket: AWS_S3_BUCKET,
+  const s3Output = new S3Upload({
+    accessKey: AWS_ACCESS_KEY_ID,
+    secret: AWS_SECRET_ACCESS_KEY,
+    sessionToken: AWS_SESSION_TOKEN ?? '',
+    region: AWS_REGION,
+    bucket: AWS_S3_BUCKET,
+  });
+  const output = new EncodedFileOutput({
+    fileType: EncodedFileType.MP4,
+    filepath: 'recordings/{room_name}-{time}.mp4',
+    output: {
+      case: 's3',
+      value: s3Output,
     },
-  };
+  });
   const layout = process.env.LIVEKIT_RECORDING_LAYOUT;
 
   try {
